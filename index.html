@@ -650,7 +650,7 @@ table.spec tr:last-child td{border-bottom:0}
    Single file. No external dependencies.
    Shell, tokens and brand lockup follow the CASEMAKER template.
    ============================================================ */
-const BUILD = "2026-09-07.31";
+const BUILD = "2026-09-07.32";
 document.getElementById('buildTag').textContent = "BUILD " + BUILD;
 
 const $ = id => document.getElementById(id);
@@ -2115,21 +2115,41 @@ function buildVacAdapter(p, N){
     return u < 0 ? u+1 : u;
   };
 
-  const ringAt = (z, outer) => {
-    const nm = nominal(z), tp = taperAt(nm.side, z), ld = leadAt(z);
+  /* The taper and the lead-in belong to the face that does the mating:
+     the outside of a male end, the bore of a female one. Applying them
+     to both faces at once ate the wall from both sides and turned it
+     inside out at the tips. The opposite face only moves if it has to,
+     to hold a minimum wall. */
+  const minW = Math.min(p.vaWall, Math.max(1.2, p.vaWall*0.6));
+  let thinnest = Infinity;
+  const wallAt = z => {
+    const nm = nominal(z), off = taperAt(nm.side, z) + leadAt(z);
     const end = nm.side === 'A' ? E.A : nm.side === 'B' ? E.B : null;
+    if (!end) return {ro: nm.ro, ri: nm.ri};
+    if (end.male){
+      const ro = nm.ro - off;
+      return {ro, ri: Math.min(nm.ri, ro - minW)};
+    }
+    const ri = nm.ri + off;
+    return {ro: Math.max(nm.ro, ri + minW), ri};
+  };
+  const ringAt = (z, outer) => {
+    const nm = nominal(z), w = wallAt(z);
+    const off = taperAt(nm.side, z) + leadAt(z);
+    const end = nm.side === 'A' ? E.A : nm.side === 'B' ? E.B : null;
+    thinnest = Math.min(thinnest, w.ro - w.ri);
     const R = [];
     for (let k=0;k<N;k++){
       const th = 2*Math.PI*k/N;
       let r;
       if (outer){
-        r = nm.ro - tp - ld;
+        r = w.ro;
         if (end && end.thr && end.male)
-          r = (end.minor - tp) + d*prof(phase(z, th, p.vaHand)) - ld;
+          r = (end.minor - off) + d*prof(phase(z, th, p.vaHand));
       } else {
-        r = nm.ri + tp + ld;
+        r = w.ri;
         if (end && end.thr && !end.male)
-          r = (end.minor + tp) + d*prof(phase(z, th, p.vaHand)) + ld;
+          r = (end.minor + off) + d*prof(phase(z, th, p.vaHand));
         /* an optional stop so the hose cannot pass the middle */
         if (p.vaRib > 0 && z > lA - p.vaRib && z < lA + lT + p.vaRib){
           const g = Math.min(z - (lA - p.vaRib), (lA + lT + p.vaRib) - z, p.vaRib);
@@ -2160,11 +2180,7 @@ function buildVacAdapter(p, N){
   const inner = zl.slice().reverse().map(z => ringAt(z, false));
   const M = shellFromRings(outer.concat(inner), N);
 
-  let minWall = Infinity;
-  for (const z of zl){
-    const nm = nominal(z);
-    minWall = Math.min(minWall, nm.ro - nm.ri);
-  }
+  const minWall = thinnest;
   return {mesh:M, planar:false, kind:'vac',
           meas:{L, lA, lT, lB, A:E.A, B:E.B, minWall,
                 fitA:p.vaFitA, fitB:p.vaFitB, diaA:p.vaDiaA, diaB:p.vaDiaB,
@@ -3053,6 +3069,13 @@ function validateVac(p){
 
   const bore = Math.min(E.A.ri, E.B.ri)*2;
   out.push(['g','Narrowest bore through the adapter is '+fmt(bore,1)+' mm.']);
+  const minW = Math.min(p.vaWall, Math.max(1.2, p.vaWall*0.6));
+  if (minW < 1.2 - 1e-9)
+    out.push(['w','The wall thins to '+fmt(minW,2)+' mm at the tips, which is under two '
+      +'perimeters. Thicken the wall if the adapter has to take any pull.']);
+  if (p.vaChamfer + Math.max(p.vaTaperA, p.vaTaperB) > p.vaWall)
+    out.push(['g','The lead-in and taper are cut into the mating face only, so the wall stays '
+      +fmt(minW,2)+' mm or better right to the tip.']);
   if (p.vaThreadA || p.vaThreadB){
     if (p.vaPitch < 2)
       out.push(['w','A pitch under 2 mm prints soft at hose sizes.']);
@@ -3925,7 +3948,9 @@ function flatReadout(p, built, chk, problems){
     rows.push(['B OUTSIDE / BORE', fmt(m.B.ro*2/u,dp)+' / '+fmt(m.B.ri*2/u,dp)+un]);
     rows.push(['NARROWEST BORE', fmt(Math.min(m.A.ri,m.B.ri)*2/u,dp)+un]);
     rows.push(['OVERALL LENGTH', fmt(m.L/u,dp)+un]);
-    rows.push(['WALL', fmt(m.wall/u,dp)+un]);
+    rows.push(['WALL', fmt(m.wall/u,dp)+un
+               + (m.minWall < m.wall - 0.01
+                  ? '  (THINNEST '+fmt(m.minWall/u,dp)+un+' AT THE TIPS)' : '')]);
     if (m.thrA || m.thrB)
       rows.push(['THREAD', fmt(m.pitch/u,dp)+un+' PITCH, '
                  +(m.hand < 0 ? 'LEFT' : 'RIGHT')+' HAND']);
