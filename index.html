@@ -327,6 +327,10 @@ table.spec tr:last-child td{border-bottom:0}
           <button data-v="male" class="on">MALE</button>
           <button data-v="female">FEMALE</button>
         </div>
+        <div class="seg" id="vaSizeASeg" style="margin-bottom:8px">
+          <button data-v="od" class="on">SIZE IS OD</button>
+          <button data-v="id">SIZE IS ID</button>
+        </div>
         <div class="row">
           <label class="f">DIAMETER A<input type="number" id="vaDiaA" step="0.5" value="47.6"><span class="mm">OD IF MALE, HOSE OD IF FEMALE</span></label>
           <label class="f">LENGTH A<input type="number" id="vaLenA" step="1" value="25"></label>
@@ -334,12 +338,16 @@ table.spec tr:last-child td{border-bottom:0}
         <div class="row">
           <label class="f">TAPER A<input type="number" id="vaTaperA" step="0.1" value="0.6"><span class="mm">NARROWS TOWARD THE TIP</span></label>
         </div>
-        <div class="tgl"><button class="btn" id="tVaThrA">THREAD END A</button></div>
+        <div class="tgl"><button class="btn" id="tVaThrA">THREAD END A</button><button class="btn" id="tVaRevA">REVERSE (LEFT HAND)</button></div>
 
         <div class="t" style="margin-top:12px">END B</div>
         <div class="seg" id="vaFitBSeg" style="margin-bottom:8px">
           <button data-v="male">MALE</button>
           <button data-v="female" class="on">FEMALE</button>
+        </div>
+        <div class="seg" id="vaSizeBSeg" style="margin-bottom:8px">
+          <button data-v="od">SIZE IS OD</button>
+          <button data-v="id" class="on">SIZE IS ID</button>
         </div>
         <div class="row">
           <label class="f">DIAMETER B<input type="number" id="vaDiaB" step="0.5" value="63.5"></label>
@@ -348,7 +356,7 @@ table.spec tr:last-child td{border-bottom:0}
         <div class="row">
           <label class="f">TAPER B<input type="number" id="vaTaperB" step="0.1" value="0.6"></label>
         </div>
-        <div class="tgl"><button class="btn" id="tVaThrB">THREAD END B</button></div>
+        <div class="tgl"><button class="btn" id="tVaThrB">THREAD END B</button><button class="btn" id="tVaRevB">REVERSE (LEFT HAND)</button></div>
 
         <div class="t" style="margin-top:12px">BODY</div>
         <div class="row">
@@ -364,10 +372,6 @@ table.spec tr:last-child td{border-bottom:0}
         </div>
 
         <div class="t" style="margin-top:12px">HOSE THREAD</div>
-        <div class="seg" id="vaHandSeg" style="margin-bottom:8px">
-          <button data-v="1">RIGHT HAND</button>
-          <button data-v="-1" class="on">LEFT HAND</button>
-        </div>
         <div class="row">
           <label class="f">PITCH<input type="number" id="vaPitch" step="0.25" value="6.35"></label>
           <label class="f">THREAD DEPTH<input type="number" id="vaThreadD" step="0.1" value="1.6"></label>
@@ -650,7 +654,7 @@ table.spec tr:last-child td{border-bottom:0}
    Single file. No external dependencies.
    Shell, tokens and brand lockup follow the CASEMAKER template.
    ============================================================ */
-const BUILD = "2026-09-07.32";
+const BUILD = "2026-09-07.34";
 document.getElementById('buildTag').textContent = "BUILD " + BUILD;
 
 const $ = id => document.getElementById(id);
@@ -2066,18 +2070,26 @@ function buildStencil(p){
 
 function vacEnds(p){
   const w = p.vaWall, cl = p.vaClear, d = p.vaThreadD;
-  const one = (fit, dia, thr) => {
-    if (fit === 'male'){
-      const major = dia/2;
-      const base  = thr ? major - d : major;          // body sits at the root
-      return {ro: base, ri: base - w, major, minor: base, thr, male:true};
+  /* The number you type is that end's own diameter, outside or inside as
+     the switch says, and the fit clearance is taken off an outside or
+     added to a bore so the joint actually goes together. Male or female
+     no longer decides what the number means; it decides which face does
+     the mating and so carries the taper, the lead-in and any thread. */
+  const one = (fit, dia, thr, mode) => {
+    const male = fit === 'male';
+    let ro, ri;
+    if (mode === 'id'){ ri = dia/2 + cl; ro = ri + w; }
+    else              { ro = dia/2 - cl; ri = ro - w; }
+    if (thr){
+      if (male) return {ro, ri, major:ro, minor:ro - d, base:ro - d, thr, male};
+      return {ro, ri, major:ri, minor:ri - d, base:ri - d, thr, male};
     }
-    const groove = dia/2 + cl;                        // deepest part of the bore
-    const base   = thr ? groove - d : groove;
-    return {ro: groove + w, ri: base, major: groove, minor: base, thr, male:false};
+    return {ro, ri, major: male ? ro : ri, minor: male ? ro : ri, thr, male};
   };
-  return {A: one(p.vaFitA, p.vaDiaA, p.vaThreadA),
-          B: one(p.vaFitB, p.vaDiaB, p.vaThreadB)};
+  const A = one(p.vaFitA, p.vaDiaA, p.vaThreadA, p.vaSizeA);
+  const B = one(p.vaFitB, p.vaDiaB, p.vaThreadB, p.vaSizeB);
+  A.hand = p.vaHandA; B.hand = p.vaHandB;
+  return {A, B};
 }
 
 function buildVacAdapter(p, N){
@@ -2127,10 +2139,10 @@ function buildVacAdapter(p, N){
     const end = nm.side === 'A' ? E.A : nm.side === 'B' ? E.B : null;
     if (!end) return {ro: nm.ro, ri: nm.ri};
     if (end.male){
-      const ro = nm.ro - off;
+      const ro = (end.thr ? end.base : nm.ro) - off;
       return {ro, ri: Math.min(nm.ri, ro - minW)};
     }
-    const ri = nm.ri + off;
+    const ri = (end.thr ? end.base : nm.ri) + off;
     return {ro: Math.max(nm.ro, ri + minW), ri};
   };
   const ringAt = (z, outer) => {
@@ -2145,11 +2157,11 @@ function buildVacAdapter(p, N){
       if (outer){
         r = w.ro;
         if (end && end.thr && end.male)
-          r = (end.minor - off) + d*prof(phase(z, th, p.vaHand));
+          r = (end.base - off) + d*prof(phase(z, th, end.hand));
       } else {
         r = w.ri;
         if (end && end.thr && !end.male)
-          r = (end.minor + off) + d*prof(phase(z, th, p.vaHand));
+          r = (end.base + off) + d*prof(phase(z, th, end.hand));
         /* an optional stop so the hose cannot pass the middle */
         if (p.vaRib > 0 && z > lA - p.vaRib && z < lA + lT + p.vaRib){
           const g = Math.min(z - (lA - p.vaRib), (lA + lT + p.vaRib) - z, p.vaRib);
@@ -2185,7 +2197,8 @@ function buildVacAdapter(p, N){
           meas:{L, lA, lT, lB, A:E.A, B:E.B, minWall,
                 fitA:p.vaFitA, fitB:p.vaFitB, diaA:p.vaDiaA, diaB:p.vaDiaB,
                 thrA:p.vaThreadA, thrB:p.vaThreadB, pitch:p.vaPitch,
-                hand:p.vaHand, clear:cl, wall:p.vaWall}};
+                handA:p.vaHandA, handB:p.vaHandB, clear:cl, wall:p.vaWall,
+                sizeA:p.vaSizeA, sizeB:p.vaSizeB}};
 }
 
 /* ============================================================
@@ -2786,7 +2799,9 @@ function readParams(){
     vaDiaB: g('vaDiaB'), vaLenB: g('vaLenB'), vaTaperB: g('vaTaperB'),
     vaWall: g('vaWall'), vaTrans: g('vaTrans'), vaClear: g('vaClear'),
     vaChamfer: g('vaChamfer'), vaRib: g('vaRib'),
-    vaPitch: g('vaPitch'), vaThreadD: g('vaThreadD'), vaHand: VAHAND,
+    vaPitch: g('vaPitch'), vaThreadD: g('vaThreadD'),
+    vaSizeA: VASIZEA, vaSizeB: VASIZEB,
+    vaHandA: VAREVA ? -1 : 1, vaHandB: VAREVB ? -1 : 1,
 
     /* stencil - always millimetres, because it is sized off the build
        plate; the unit switch must not touch any of these */
@@ -3172,9 +3187,150 @@ function toSTEP(mesh, planarOK, tag, s){
       body.push("#"+e+"=CARTESIAN_POINT('',("+X+","+Y+","+Z+"));"); }
     pid[i] = e;
   }
-  const faceIds = [];
+  /* Faces that lie in the same plane and touch edge to edge describe one
+     flat area between them. A square tube side arrives as hundreds of
+     separate quads, which bloats the file and gives the reader hundreds
+     of faces to sew for no gain. Merge each coplanar patch into a single
+     polygon: cancel the edges the faces share, and what is left is the
+     outline. Only patches that trace to exactly one clean loop are
+     merged, so nothing with a hole or a pinch point is touched. */
+  const gq = 1e4;
+  const groups = new Map();
   for (const f of faces){
-    const owner = shellOf.has(f) ? shellOf.get(f) : (f.src !== undefined ? f.src : 0);
+    let X=0,Y=0,Z=0;
+    for (let i=0;i<f.length;i++){
+      const a2=f[i]*3, b2=f[(i+1)%f.length]*3;
+      X += (V[a2+1]-V[b2+1])*(V[a2+2]+V[b2+2]);
+      Y += (V[a2+2]-V[b2+2])*(V[a2]+V[b2]);
+      Z += (V[a2]-V[b2])*(V[a2+1]+V[b2+1]);
+    }
+    const m2 = Math.hypot(X,Y,Z);
+    if (m2 < 1e-9){ continue; }
+    X/=m2; Y/=m2; Z/=m2;
+    const d0 = X*V[f[0]*3] + Y*V[f[0]*3+1] + Z*V[f[0]*3+2];
+    const own = shellOf.has(f) ? shellOf.get(f) : (f.src !== undefined ? f.src : 0);
+    const k = own+'|'+Math.round(X*gq)+','+Math.round(Y*gq)+','+Math.round(Z*gq)
+              +'|'+Math.round(d0*gq);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(f);
+  }
+  const merged = [];
+  for (const g of groups.values()){
+    if (g.length < 2){ for (const f of g) merged.push(f); continue; }
+    const edge = new Map(), vtx = new Map();
+    let ok2 = true;
+    for (const f of g){
+      for (let i=0;i<f.length && ok2;i++){
+        const a2 = pid[f[i]], b2 = pid[f[(i+1)%f.length]];
+        if (a2 === b2) continue;
+        const rev = b2+','+a2;
+        if (edge.has(rev)) edge.delete(rev);
+        else if (edge.has(a2+','+b2)) ok2 = false;      // same edge twice, not a simple patch
+        else edge.set(a2+','+b2, [f[i], f[(i+1)%f.length]]);
+      }
+    }
+    if (!ok2 || edge.size < 3){ for (const f of g) merged.push(f); continue; }
+    for (const [k2,v] of edge){
+      const a2 = k2.split(',')[0];
+      if (vtx.has(a2)){ ok2 = false; break; }             // a pinch point, leave it alone
+      vtx.set(a2, v);
+    }
+    if (!ok2){ for (const f of g) merged.push(f); continue; }
+    const start = vtx.keys().next().value;
+    const loop = []; let cur = start;
+    for (let i=0;i<=vtx.size;i++){
+      const nxt = vtx.get(cur);
+      if (!nxt){ ok2 = false; break; }
+      loop.push(nxt[0]);
+      cur = String(pid[nxt[1]]);
+      if (cur === start) break;
+    }
+    if (!ok2 || loop.length !== vtx.size || loop.length < 3){
+      for (const f of g) merged.push(f); continue;
+    }
+    /* drop points that sit on a straight run */
+    const out2 = [];
+    for (let i=0;i<loop.length;i++){
+      const a2=loop[(i-1+loop.length)%loop.length]*3, b2=loop[i]*3, c2=loop[(i+1)%loop.length]*3;
+      const ux=V[b2]-V[a2], uy=V[b2+1]-V[a2+1], uz=V[b2+2]-V[a2+2];
+      const vx=V[c2]-V[b2], vy=V[c2+1]-V[b2+1], vz=V[c2+2]-V[b2+2];
+      const cx=uy*vz-uz*vy, cy=uz*vx-ux*vz, cz=ux*vy-uy*vx;
+      if (Math.hypot(cx,cy,cz) > 1e-7) out2.push(loop[i]);
+    }
+    const fin = out2.length >= 3 ? out2 : loop;
+    /* the plane bucket is coarse, so a gently curved patch can land in
+       one. Measure the merged loop against its own plane and keep the
+       separate faces if it is not truly flat. */
+    let nx2=0, ny2=0, nz2=0;
+    for (let i=0;i<fin.length;i++){
+      const a2=fin[i]*3, b2=fin[(i+1)%fin.length]*3;
+      nx2 += (V[a2+1]-V[b2+1])*(V[a2+2]+V[b2+2]);
+      ny2 += (V[a2+2]-V[b2+2])*(V[a2]+V[b2]);
+      nz2 += (V[a2]-V[b2])*(V[a2+1]+V[b2+1]);
+    }
+    const nm2 = Math.hypot(nx2,ny2,nz2);
+    if (nm2 < 1e-9){ for (const f of g) merged.push(f); continue; }
+    nx2/=nm2; ny2/=nm2; nz2/=nm2;
+    const p0 = nx2*V[fin[0]*3] + ny2*V[fin[0]*3+1] + nz2*V[fin[0]*3+2];
+    let dev = 0;
+    for (const i of fin)
+      dev = Math.max(dev, Math.abs(nx2*V[i*3] + ny2*V[i*3+1] + nz2*V[i*3+2] - p0));
+    if (dev > 1e-6){ for (const f of g) merged.push(f); continue; }
+    if (g[0].src !== undefined) fin.src = g[0].src;
+    if (shellOf.has(g[0])) shellOf.set(fin, shellOf.get(g[0]));
+    merged.push(fin);
+  }
+  /* A builder can declare its quads planar and still hand over a corner
+     that is very slightly warped, which leaves a PLANE that does not
+     contain its own loop. Rather than trust the flag, measure every
+     polygon and split the ones that are not flat into triangles, which
+     always are. */
+  const flat = [];
+  for (const f of merged){
+    if (f.length <= 3){ flat.push(f); continue; }
+    let nx2=0, ny2=0, nz2=0;
+    for (let i=0;i<f.length;i++){
+      const a2=f[i]*3, b2=f[(i+1)%f.length]*3;
+      nx2 += (V[a2+1]-V[b2+1])*(V[a2+2]+V[b2+2]);
+      ny2 += (V[a2+2]-V[b2+2])*(V[a2]+V[b2]);
+      nz2 += (V[a2]-V[b2])*(V[a2+1]+V[b2+1]);
+    }
+    const nm2 = Math.hypot(nx2,ny2,nz2);
+    let dev = Infinity;
+    if (nm2 > 1e-9){
+      nx2/=nm2; ny2/=nm2; nz2/=nm2;
+      const p0 = nx2*V[f[0]*3] + ny2*V[f[0]*3+1] + nz2*V[f[0]*3+2];
+      dev = 0;
+      for (const i of f)
+        dev = Math.max(dev, Math.abs(nx2*V[i*3] + ny2*V[i*3+1] + nz2*V[i*3+2] - p0));
+    }
+    if (dev <= 1e-6){ flat.push(f); continue; }
+    for (let i=1;i+1<f.length;i++){
+      const t2 = [f[0], f[i], f[i+1]];
+      if (f.src !== undefined) t2.src = f.src;
+      if (shellOf.has(f)) shellOf.set(t2, shellOf.get(f));
+      flat.push(t2);
+    }
+  }
+  faces = flat;
+
+  const faceIds = [];
+  for (const f0 of faces){
+    const owner = shellOf.has(f0) ? shellOf.get(f0) : (f0.src !== undefined ? f0.src : 0);
+    /* Points that were a fraction apart in the mesh can land on the same
+       written point once coordinates are rounded. That leaves a loop
+       naming the same point twice, which is a null face, and readers
+       fall over on those. Collapse the repeats and drop what is left if
+       it is no longer a polygon. A null face carries no area and its two
+       coincident edges cancel, so removing it cannot open the shell. */
+    const f = [];
+    for (let i=0;i<f0.length;i++){
+      const q = pid[f0[i]];
+      if (f.length && pid[f[f.length-1]] === q) continue;
+      f.push(f0[i]);
+    }
+    while (f.length > 1 && pid[f[0]] === pid[f[f.length-1]]) f.pop();
+    if (f.length < 3) continue;
     let X=0,Y=0,Z=0;
     for (let i=0;i<f.length;i++){
       const a=f[i]*3, b=f[(i+1)%f.length]*3;
@@ -3182,7 +3338,7 @@ function toSTEP(mesh, planarOK, tag, s){
       Y += (V[a+2]-V[b+2])*(V[a]+V[b]);
       Z += (V[a]-V[b])*(V[a+1]+V[b+1]);
     }
-    const m = Math.hypot(X,Y,Z); if (m < 1e-12) continue;
+    const m = Math.hypot(X,Y,Z); if (m < 1e-9) continue;
     X/=m; Y/=m; Z/=m;
     const a=f[0]*3, b=f[1]*3;
     let rx=V[b]-V[a], ry=V[b+1]-V[a+1], rz=V[b+2]-V[a+2];
@@ -3380,7 +3536,8 @@ let TYPE = 'plug', SHAPE = 'circle', UNIT = 'mm', ANGMODE = 'rotate';
 let SLOTS = true, TAPER = true, SOLID = false, CURRENT = null;
 let SPPROF = 'round', SPKIND = 'spacer', TIPBASE = 'angled';
 let GRPART = 'base', GRMOUNT = 'snap', GRRETAIN = 'groove';
-let VAFITA = 'male', VAFITB = 'female', VATHRA = false, VATHRB = false, VAHAND = -1;
+let VAFITA = 'male', VAFITB = 'female', VATHRA = false, VATHRB = false;
+let VASIZEA = 'od', VASIZEB = 'id', VAREVA = true, VAREVB = true;
 let VESHAPE = 'rect', VECORNER = 'round', VEOPEN = 'rect', VEFN = 'louver', VEMESH = 'square';
 let STSIZE = 'fit', STMULTI = false, STJOINT = 'dovetail';
 
@@ -3439,7 +3596,8 @@ const DEFAULTS = {
   vac:    {vaDiaA:'47.6',vaLenA:'25',vaTaperA:'0.6',vaDiaB:'63.5',vaLenB:'25',vaTaperB:'0.6',
            vaWall:'2.5',vaTrans:'12',vaClear:'0.4',vaChamfer:'1',vaRib:'0',
            vaPitch:'6.35',vaThreadD:'1.6',
-           VAFITA:'male',VAFITB:'female',VATHRA:false,VATHRB:false,VAHAND:-1},
+           VAFITA:'male',VAFITB:'female',VATHRA:false,VATHRB:false,
+           VASIZEA:'od',VASIZEB:'id',VAREVA:true,VAREVB:true},
   stencil:{stText1:'CONKLIN',stText2:'',stText3:'',stFont:'allerta',stTextH:'40',stTrack:'2',
            stLead:'35',stBorder:'15',stThick:'1.6',stW:'200',stH:'90',stCorner:'5',
            stQuality:'8',
@@ -3468,7 +3626,10 @@ function applyDefaults(t){
     if (k === 'VAFITB'){ VAFITB = d[k]; segSet('vaFitBSeg', d[k]); continue; }
     if (k === 'VATHRA'){ VATHRA = d[k]; continue; }
     if (k === 'VATHRB'){ VATHRB = d[k]; continue; }
-    if (k === 'VAHAND'){ VAHAND = d[k]; segSet('vaHandSeg', String(d[k])); continue; }
+    if (k === 'VASIZEA'){ VASIZEA = d[k]; segSet('vaSizeASeg', d[k]); continue; }
+    if (k === 'VASIZEB'){ VASIZEB = d[k]; segSet('vaSizeBSeg', d[k]); continue; }
+    if (k === 'VAREVA'){ VAREVA = d[k]; continue; }
+    if (k === 'VAREVB'){ VAREVB = d[k]; continue; }
     if (k === 'VESHAPE'){ VESHAPE = d[k]; segSet('veShapeSeg', d[k]); continue; }
     if (k === 'VECORNER'){ VECORNER = d[k]; segSet('veCornerSeg', d[k]); continue; }
     if (k === 'VEOPEN'){ VEOPEN = d[k]; segSet('veOpenSeg', d[k]); continue; }
@@ -3548,7 +3709,10 @@ segWire('veFnSeg', v => { VEFN = v; syncUI(); rebuild(); push(); });
 segWire('veMeshSeg', v => { VEMESH = v; syncUI(); rebuild(); push(); });
 segWire('vaFitASeg', v => { VAFITA = v; syncUI(); rebuild(); push(); });
 segWire('vaFitBSeg', v => { VAFITB = v; syncUI(); rebuild(); push(); });
-segWire('vaHandSeg', v => { VAHAND = parseFloat(v); syncUI(); rebuild(); push(); });
+segWire('vaSizeASeg', v => { VASIZEA = v; syncUI(); rebuild(); push(); });
+segWire('vaSizeBSeg', v => { VASIZEB = v; syncUI(); rebuild(); push(); });
+$('tVaRevA').onclick = () => { VAREVA = !VAREVA; syncUI(); rebuild(); push(); };
+$('tVaRevB').onclick = () => { VAREVB = !VAREVB; syncUI(); rebuild(); push(); };
 $('tVaThrA').onclick = () => { VATHRA = !VATHRA; syncUI(); rebuild(); push(); };
 $('tVaThrB').onclick = () => { VATHRB = !VATHRB; syncUI(); rebuild(); push(); };
 segWire('grRetainSeg', v => { GRRETAIN = v; rebuild.lastR = 0; syncUI(); rebuild(); push(); });
@@ -3632,7 +3796,8 @@ function syncUI(){
       $('tVaThrB').classList.toggle('on', VATHRB);
       const anyThr = VATHRA || VATHRB;
       ['vaPitch','vaThreadD'].forEach(id => $(id).disabled = !anyThr);
-      [...$('vaHandSeg').children].forEach(b2 => b2.disabled = !anyThr);
+      $('tVaRevA').classList.toggle('on', VAREVA); $('tVaRevA').disabled = !VATHRA;
+      $('tVaRevB').classList.toggle('on', VAREVB); $('tVaRevB').disabled = !VATHRB;
     }
     if (t === 'stencil'){
       $('tStMulti').classList.toggle('on', STMULTI);
@@ -3942,9 +4107,12 @@ function flatReadout(p, built, chk, problems){
     rows.push(['SEPARATE PIECES', String(m.shells)]);
   } else if (p.type === 'vac'){
     const nm = f => f === 'male' ? 'MALE' : 'FEMALE';
-    rows.push(['END A', nm(m.fitA)+' '+fmt(m.diaA/u,dp)+un+(m.thrA?', THREADED':'')]);
+    const hd = h => h < 0 ? 'LEFT HAND' : 'RIGHT HAND';
+    rows.push(['END A', nm(m.fitA)+' '+fmt(m.diaA/u,dp)+un+' '+m.sizeA.toUpperCase()
+               +(m.thrA?', THREADED '+hd(m.handA):'')]);
     rows.push(['A OUTSIDE / BORE', fmt(m.A.ro*2/u,dp)+' / '+fmt(m.A.ri*2/u,dp)+un]);
-    rows.push(['END B', nm(m.fitB)+' '+fmt(m.diaB/u,dp)+un+(m.thrB?', THREADED':'')]);
+    rows.push(['END B', nm(m.fitB)+' '+fmt(m.diaB/u,dp)+un+' '+m.sizeB.toUpperCase()
+               +(m.thrB?', THREADED '+hd(m.handB):'')]);
     rows.push(['B OUTSIDE / BORE', fmt(m.B.ro*2/u,dp)+' / '+fmt(m.B.ri*2/u,dp)+un]);
     rows.push(['NARROWEST BORE', fmt(Math.min(m.A.ri,m.B.ri)*2/u,dp)+un]);
     rows.push(['OVERALL LENGTH', fmt(m.L/u,dp)+un]);
@@ -3952,8 +4120,7 @@ function flatReadout(p, built, chk, problems){
                + (m.minWall < m.wall - 0.01
                   ? '  (THINNEST '+fmt(m.minWall/u,dp)+un+' AT THE TIPS)' : '')]);
     if (m.thrA || m.thrB)
-      rows.push(['THREAD', fmt(m.pitch/u,dp)+un+' PITCH, '
-                 +(m.hand < 0 ? 'LEFT' : 'RIGHT')+' HAND']);
+      rows.push(['THREAD PITCH', fmt(m.pitch/u,dp)+un]);
   } else {
     rows.push(['PLATE', fmt(m.W,1)+' \u00d7 '+fmt(m.H,1)+' MM']);
     rows.push([m.fitted ? 'CAP HEIGHT, FITTED TO BED' : 'CAP HEIGHT', fmt(m.cap,1)+' MM']);
@@ -4297,45 +4464,46 @@ const PRESETS = [
   {g:'HOSE ADAPTER', id:'va25to178', label:'2-1/2 in TO 1-7/8 in', type:'vac',
    v:{vaDiaA:'47.6', vaLenA:'25', vaTaperA:'0.6', vaDiaB:'63.5', vaLenB:'25', vaTaperB:'0.6',
       vaWall:'2.5', vaTrans:'12', vaClear:'0.4', vaChamfer:'1', vaRib:'0'},
-   vaFitA:'male', vaFitB:'female', vaThreadA:false, vaThreadB:false,
+   vaFitA:'male', vaFitB:'female', vaSizeA:'od', vaSizeB:'id',
    src:'US shop-vac sizes are quoted on the outside: 1-1/4 in is 31.75 mm, 1-7/8 in is 47.6 mm, '
       +'2-1/4 in is 57.15 mm and 2-1/2 in is 63.5 mm'},
   {g:'HOSE ADAPTER', id:'va25thr', label:'2-1/2 in THREADED, LEFT HAND', type:'vac',
    v:{vaDiaA:'63.5', vaLenA:'28', vaTaperA:'0', vaDiaB:'63.5', vaLenB:'22', vaTaperB:'0.6',
       vaWall:'3', vaTrans:'8', vaClear:'0.4', vaChamfer:'1', vaRib:'0',
       vaPitch:'6.35', vaThreadD:'1.6'},
-   vaFitA:'female', vaFitB:'male', vaThreadA:true, vaThreadB:false, vaHand:-1,
+   vaFitA:'female', vaFitB:'male', vaThreadA:true, vaThreadB:false,
+   vaSizeA:'id', vaSizeB:'od', vaRevA:true, vaRevB:false,
    src:'2-1/2 in shop-vac hose ends screw in, and the thread is normally LEFT hand \u2014 '
       +'Powertec and others sell them as left-hand adapters. Pitch is a starting point; measure yours'},
   {g:'HOSE ADAPTER', id:'va4to25', label:'4 in TO 2-1/2 in DUST PORT', type:'vac',
    v:{vaDiaA:'101.6', vaLenA:'30', vaTaperA:'0.8', vaDiaB:'63.5', vaLenB:'28', vaTaperB:'0.6',
       vaWall:'3', vaTrans:'22', vaClear:'0.5', vaChamfer:'1.5', vaRib:'0'},
-   vaFitA:'female', vaFitB:'male', vaThreadA:false, vaThreadB:false,
+   vaFitA:'female', vaFitB:'male', vaSizeA:'id', vaSizeB:'od',
    src:'4 in is the usual dust-collection trunk size, 101.6 mm'},
   {g:'HOSE ADAPTER', id:'va2736', label:'FESTOOL 27 mm TO 36 mm', type:'vac',
    v:{vaDiaA:'27', vaLenA:'22', vaTaperA:'0.4', vaDiaB:'36', vaLenB:'22', vaTaperB:'0.5',
       vaWall:'2', vaTrans:'10', vaClear:'0.35', vaChamfer:'0.8', vaRib:'0'},
-   vaFitA:'male', vaFitB:'female', vaThreadA:false, vaThreadB:false,
+   vaFitA:'male', vaFitB:'female', vaSizeA:'od', vaSizeB:'id',
    src:'Festool hoses come in 27, 36 and 50 mm, quoted on the inside diameter'},
   {g:'HOSE ADAPTER', id:'va3532', label:'35 mm TO 32 mm TOOL PORT', type:'vac',
    v:{vaDiaA:'35', vaLenA:'20', vaTaperA:'0.4', vaDiaB:'32', vaLenB:'20', vaTaperB:'0.4',
       vaWall:'2', vaTrans:'8', vaClear:'0.35', vaChamfer:'0.8', vaRib:'2'},
-   vaFitA:'female', vaFitB:'male', vaThreadA:false, vaThreadB:false,
+   vaFitA:'female', vaFitB:'male', vaSizeA:'id', vaSizeB:'od',
    src:'35 mm is the common Bosch and Karcher size; 32 mm is the usual household tube'},
   {g:'HOSE ADAPTER', id:'va2238', label:'MAKITA 22 mm TO 38 mm', type:'vac',
    v:{vaDiaA:'22', vaLenA:'18', vaTaperA:'0.3', vaDiaB:'38', vaLenB:'22', vaTaperB:'0.5',
       vaWall:'2', vaTrans:'12', vaClear:'0.35', vaChamfer:'0.8', vaRib:'0'},
-   vaFitA:'male', vaFitB:'female', vaThreadA:false, vaThreadB:false,
+   vaFitA:'male', vaFitB:'female', vaSizeA:'od', vaSizeB:'id',
    src:'Makita tool ports run 22 and 28 mm; 38 mm is a common extractor hose'},
   {g:'HOSE ADAPTER', id:'va125to32', label:'1-1/4 in TO 32 mm', type:'vac',
    v:{vaDiaA:'31.75', vaLenA:'20', vaTaperA:'0.4', vaDiaB:'32', vaLenB:'20', vaTaperB:'0.4',
       vaWall:'2', vaTrans:'8', vaClear:'0.35', vaChamfer:'0.8', vaRib:'2'},
-   vaFitA:'male', vaFitB:'female', vaThreadA:false, vaThreadB:false,
+   vaFitA:'male', vaFitB:'female', vaSizeA:'od', vaSizeB:'id',
    src:'1-1/4 in shop-vac, 31.75 mm, onto the 32 mm metric tube \u2014 near enough to need a real fit check'},
   {g:'HOSE ADAPTER', id:'vacoupler', label:'2-1/2 in STRAIGHT COUPLER', type:'vac',
    v:{vaDiaA:'63.5', vaLenA:'26', vaTaperA:'0.6', vaDiaB:'63.5', vaLenB:'26', vaTaperB:'0.6',
       vaWall:'2.5', vaTrans:'6', vaClear:'0.4', vaChamfer:'1', vaRib:'2.5'},
-   vaFitA:'female', vaFitB:'female', vaThreadA:false, vaThreadB:false,
+   vaFitA:'female', vaFitB:'female', vaSizeA:'id', vaSizeB:'id',
    src:'Joins two 2-1/2 in hose ends; the end-stop rib keeps them off each other'},
   {g:'STENCIL', id:'stCrate', label:'CRATE LABEL, ONE LINE', type:'stencil', shape:'circle',
    v:{stText1:'CONKLIN', stText2:'', stText3:'', stTextH:'40', stBorder:'15',
@@ -4413,7 +4581,10 @@ function applyPreset(id){
   if (P.vaFitB){ VAFITB = P.vaFitB; segSet('vaFitBSeg', VAFITB); }
   if (P.vaThreadA !== undefined) VATHRA = P.vaThreadA;
   if (P.vaThreadB !== undefined) VATHRB = P.vaThreadB;
-  if (P.vaHand){ VAHAND = P.vaHand; segSet('vaHandSeg', String(VAHAND)); }
+  if (P.vaSizeA){ VASIZEA = P.vaSizeA; segSet('vaSizeASeg', VASIZEA); }
+  if (P.vaSizeB){ VASIZEB = P.vaSizeB; segSet('vaSizeBSeg', VASIZEB); }
+  if (P.vaRevA !== undefined) VAREVA = P.vaRevA;
+  if (P.vaRevB !== undefined) VAREVB = P.vaRevB;
   if (P.veShape){ VESHAPE = P.veShape; segSet('veShapeSeg', VESHAPE); }
   if (P.veOpenShape){ VEOPEN = P.veOpenShape; segSet('veOpenSeg', VEOPEN); }
   if (P.veFn){ VEFN = P.veFn; segSet('veFnSeg', VEFN); }
@@ -4436,7 +4607,7 @@ function getState(){
   const v = {}; INPUTS.forEach(id => v[id] = $(id).value);
   const o = {}; OPTIDS.forEach(id => o[id] = $(id).value);
   return {app:'PARTMAKER', build:BUILD, TYPE, SHAPE, UNIT, ANGMODE, SLOTS, TAPER, SOLID,
-          SPPROF, SPKIND, TIPBASE, GRPART, GRMOUNT, GRRETAIN, VAFITA, VAFITB, VATHRA, VATHRB, VAHAND,
+          SPPROF, SPKIND, TIPBASE, GRPART, GRMOUNT, GRRETAIN, VAFITA, VAFITB, VATHRA, VATHRB, VASIZEA, VASIZEB, VAREVA, VAREVB,
           VESHAPE, VECORNER, VEOPEN, VEFN, VEMESH, STSIZE, STMULTI, STJOINT, WIRE:wire, CUT:cutaway, v, o};
 }
 function setState(s){
@@ -4450,14 +4621,16 @@ function setState(s){
   TIPBASE = s.TIPBASE || 'angled'; GRPART = s.GRPART || 'base';
   GRMOUNT = s.GRMOUNT || 'snap'; GRRETAIN = s.GRRETAIN || 'groove';
   VAFITA = s.VAFITA || 'male'; VAFITB = s.VAFITB || 'female';
-  VATHRA = !!s.VATHRA; VATHRB = !!s.VATHRB; VAHAND = s.VAHAND || -1;
+  VATHRA = !!s.VATHRA; VATHRB = !!s.VATHRB;
+  VASIZEA = s.VASIZEA || 'od'; VASIZEB = s.VASIZEB || 'id';
+  VAREVA = s.VAREVA !== false; VAREVB = s.VAREVB !== false;
   VESHAPE = s.VESHAPE || 'rect'; VECORNER = s.VECORNER || 'round';
   VEOPEN = s.VEOPEN || 'rect'; VEFN = s.VEFN || 'louver'; VEMESH = s.VEMESH || 'square';
   STSIZE = s.STSIZE || 'fit'; STMULTI = !!s.STMULTI; STJOINT = s.STJOINT || 'dovetail';
   segSet('spProfSeg', SPPROF); segSet('spKindSeg', SPKIND);
   segSet('tipBaseSeg', TIPBASE); segSet('grPartSeg', GRPART); segSet('grMountSeg', GRMOUNT); segSet('grRetainSeg', GRRETAIN);
   segSet('vaFitASeg', VAFITA); segSet('vaFitBSeg', VAFITB);
-  segSet('vaHandSeg', String(VAHAND));
+  segSet('vaSizeASeg', VASIZEA); segSet('vaSizeBSeg', VASIZEB);
   segSet('veShapeSeg', VESHAPE); segSet('veCornerSeg', VECORNER);
   segSet('veOpenSeg', VEOPEN); segSet('veFnSeg', VEFN); segSet('veMeshSeg', VEMESH);
   segSet('stSizeSeg', STSIZE); segSet('stJointSeg', STJOINT);
